@@ -1,0 +1,4 @@
+PS C:\Users\User> Invoke-WebRequest -Uri "http://127.0.0.1:8000/predict" `
+>>   -Method POST `
+>>   -Headers @{ "Content-Type" = "application/json" } `
+>>   -Body '{"features": [1.0]}'
