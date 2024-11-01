@@ -1,73 +1,53 @@
-from sklearn.svm import SVC
-from sklearn.model_selection import train_test_split
-from imblearn.over_sampling import SMOTE
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
-import numpy as np
-import joblib
 import os
-import wfdb
+import jpype
 
-# Path to the MIT-BIH database
-DATA_DIR = r'C:\\stasi\\SoftUni_Machine_learning\\mit-bih-arrhythmia-database-1.0.0\\mit-bih-arrhythmia-database-1.0.0'
+# Get the path to the JVM (libjvm.so or jvm.dll)
+java_jvm_path = jpype.getDefaultJVMPath()
 
-# List of record numbers to process
-RECORD_NUMBERS = ['100', '101', '102', '103', '104', '105']  # Use a subset for demonstration
+# Set JAVA_HOME to the parent directory of libjvm.so or jvm.dll
+java_home_path = os.path.dirname(os.path.dirname(java_jvm_path))
+os.environ["JAVA_HOME"] = java_home_path
+os.environ["PATH"] += os.pathsep + os.path.join(java_home_path, "bin")
 
-# Extract RR intervals and labels
-train_rr_intervals = []
-train_labels = []
+# Start the JVM with jpype if not already started (only if needed for other dependencies)
+if not jpype.isJVMStarted():
+    jpype.startJVM()
 
-def extract_rr_intervals(annotation):
-    return np.diff(annotation.sample) / annotation.fs  # RR intervals in seconds
+# Now, initialize the Spark session
+from pyspark.sql import SparkSession
 
-def process_records(record_list, rr_intervals_list, labels_list):
-    for record_number in record_list:
-        record_path = os.path.join(DATA_DIR, record_number)
-        try:
-            # Load the record and annotations
-            record = wfdb.rdrecord(record_path)
-            annotation = wfdb.rdann(record_path, 'atr')
+# Initialize Spark session
+spark = SparkSession.builder.appName("ECGPredictor").getOrCreate()
 
-            # Extract RR intervals and labels for each beat
-            rr_intervals = extract_rr_intervals(annotation)
-            labels = [1 if sym == 'N' else 0 for sym in annotation.symbol[:-1]]  # 1 for normal, 0 for others
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import VectorAssembler, StandardScaler
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml import Pipeline
+from pyspark.sql.functions import col
 
-            # Append to the corresponding dataset
-            rr_intervals_list.extend(rr_intervals)
-            labels_list.extend(labels)
-        except Exception as e:
-            print(f"Could not process record {record_number}: {e}")
+# Initialize Spark
+spark = SparkSession.builder.appName("ECGClassification").getOrCreate()
 
-# Process training records
-process_records(RECORD_NUMBERS, train_rr_intervals, train_labels)
+# Load the dataset
+# (Assume data is available in a CSV format)
+data = spark.read.csv("path/to/ecg_data.csv", header=True, inferSchema=True)
 
-# Convert lists to numpy arrays
-X = np.array(train_rr_intervals).reshape(-1, 1)  # RR intervals as features
-y = np.array(train_labels)  # Labels
+# Assemble the feature columns (e.g., RR intervals)
+assembler = VectorAssembler(inputCols=["RR_intervals"], outputCol="features")
+data = assembler.transform(data)
 
-# Split the data into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Apply Standard Scaling
+scaler = StandardScaler(inputCol="features", outputCol="scaled_features")
+scaled_data = scaler.fit(data).transform(data)
 
-# Apply SMOTE to handle class imbalance
-sm = SMOTE(random_state=42)
-X_res, y_res = sm.fit_resample(X_train, y_train)
+# Initialize RandomForestClassifier as an alternative to SVC
+rf = RandomForestClassifier(labelCol="label", featuresCol="scaled_features", numTrees=100, maxDepth=5)
 
-# Create a pipeline with StandardScaler and SVM classifier
-pipeline = Pipeline([
-    ('scaler', StandardScaler()),  # Step 1: Standardize the features
-    ('svm', SVC(C=100, gamma=1, kernel='rbf', class_weight={0: 3, 1: 1}))  # Step 2: Train SVM
-])
+# Create a pipeline
+pipeline = Pipeline(stages=[assembler, scaler, rf])
 
-# Train the pipeline on the balanced dataset
-pipeline.fit(X_res, y_res)
+# Train the pipeline on the dataset
+model = pipeline.fit(scaled_data)
 
-# Evaluate the model on the test data
-y_pred = pipeline.predict(X_test)
-print(classification_report(y_test, y_pred))
-
-# Save the entire pipeline
-MODEL_PATH = 'optimized_svm_mode_1.pkl'
-joblib.dump(pipeline, MODEL_PATH)
-print("Model saved successfully!")
+# Save the model (replace with the correct path)
+model.write().overwrite().save("path/to/saved_model")
