@@ -21,6 +21,13 @@ except Exception as e:
 # Broadcast the model
 broadcast_model = spark.sparkContext.broadcast(model)
 
+# Define the prediction function
+def make_prediction(features):
+    features_array = np.array(features).reshape(1, -1)
+    prediction = model.predict(features_array)
+    label_map = {0: "Normal", 1: "Anomaly"}
+    return label_map.get(prediction[0], "Unknown")
+
 # Step 3: Load Dummy Data from CSV
 csv_path = r"C:\stasi\SoftUni_Machine_learning\Pyspark_FastAPI\dummy_data.csv"
 try:
